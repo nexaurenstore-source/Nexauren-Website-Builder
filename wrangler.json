@@ -5,5 +5,6 @@
   "compatibility_date":"2026-08-28",
   "assets":{"directory":".","binding":"ASSETS","not_found_handling":"404-page"},
   "d1_databases":[{"binding":"DB","database_name":"nexauren-db","database_id":"b521297c-ada5-4818-bb66-9bde85bee2a1"}],
-  "vars":{"PAYMENT_PROVIDER":"paypal","PAYPAL_ENVIRONMENT":"sandbox","PAYMENT_BRAND_NAME":"Nexauren"}
+  "vars":{"PAYMENT_PROVIDER":"paypal","PAYPAL_ENVIRONMENT":"live","PAYMENT_BRAND_NAME":"Nexauren"},
+  "secrets":{"required":["PAYPAL_CLIENT_ID","PAYPAL_CLIENT_SECRET"]}
 }
