@@ -1,36 +1,42 @@
 # Nexauren Website Builder
 
-Universal frontend-first website creation platform.
+Universal visual website creation platform. It is not limited to stores: users can create websites, blogs, stores, portfolios, landing pages, business sites, course sites, membership sites or blank projects.
 
-## Create anything
-- Website
-- Blog
-- Online Store
-- Portfolio
-- Landing Page
-- Business Site
-- Course Site
-- Membership Site
-- Blank Site
+## Builder
+- Nested blocks, containers and columns
+- Inline canvas editing
+- Reusable patterns and components
+- Global Header / Footer
+- Page templates
+- Per-element styling and responsive preview
+- Pages, Blog, Store, Forms, Media, Navigation, Theme and SEO modules
+- HTML export and preview/publish simulation
 
-## Core builder
-- Pages and custom URLs
-- Ready-made sections
-- Insert / edit / reorder / delete sections
-- Shared theme and branding
-- Responsive preview
-- SEO title and description
-- Navigation
-- Forms
-- Media library surface
-- Analytics event surface
-- HTML export
-- Local publish/preview simulation
+## Monetization
+The Builder uses the **same Nexauren billing catalog and D1 database** as the main Nexauren platform. It does not create a second plan or credit system.
 
-## Optional modules
-A project can use commerce or publishing features without forcing every project to be a store. Store products, blog posts, courses and memberships are modules of the universal site builder.
+Current shared plans:
+- Free — $0
+- Starter — $4.99/month — 300 credits/cycle
+- Pro — $10/month — 1,000 credits/cycle
+- Premium — $19.99/month — 3,000 credits/cycle
 
-## Architecture
-The current phase is frontend-only. Project state intentionally stays in JavaScript memory and is not persisted to D1, localStorage or sessionStorage. Payment gateways, databases, R2/S3/Drive/Dropbox, external APIs, authentication and secure credential storage are reserved for later phases.
+The Builder can also sell the shared credit packages. Free remains useful as a real website builder; limits should focus on project scale, premium templates and advanced/costly services rather than preventing users from building a complete site.
 
-The feature direction is informed by public website-builder capabilities such as pages, sections, custom pages, colors, fonts, responsive previews and blogging, while the Nexauren implementation and interface remain independent. citeturn0search0turn0search1
+## Shared billing integration
+`wrangler.json` binds this Worker to the existing Nexauren D1 database. `billing-core.js` implements the shared billing model and `paypal-provider.js` handles PayPal checkout/subscription operations without exposing credentials to the browser.
+
+Supported Builder billing endpoints:
+- `GET /api/billing/catalog`
+- `GET /api/billing/account`
+- `GET /api/billing/credits`
+- `GET /api/billing/transactions`
+- `POST /api/billing/checkout`
+- `GET /api/billing/payment?reference=...`
+- `POST /api/billing/payment`
+- `POST /api/billing/subscription/cancel`
+
+PayPal credentials must be configured as Worker secrets (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`) and the environment should remain `sandbox` until the complete sandbox flow is validated.
+
+## Important
+This repository is intentionally separate from `nexaurenstore-source/nexauren`. The main Nexauren repository is not modified by the Builder work.
