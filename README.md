@@ -1,27 +1,36 @@
 # Nexauren Website Builder
 
-Standalone storefront builder for Nexauren.
+Universal frontend-first website creation platform.
 
-## Current scope
-- Digital products
-- Physical products
-- Online courses
-- Memberships
-- Coaching
-- Product bundles
-- Product visibility: visible, unlisted, invisible
-- Free products and pay-what-you-want fields
-- Product previews / license / mailing-list options
-- Storefront preview
-- Store Builder with ready-made sections
-- Themes and brand settings
-- Coupons
-- Orders and customers from local test checkout
-- Marketing surface for affiliates, referrals, cross-sells and reviews
-- Static HTML export
+## Create anything
+- Website
+- Blog
+- Online Store
+- Portfolio
+- Landing Page
+- Business Site
+- Course Site
+- Membership Site
+- Blank Site
+
+## Core builder
+- Pages and custom URLs
+- Ready-made sections
+- Insert / edit / reorder / delete sections
+- Shared theme and branding
+- Responsive preview
+- SEO title and description
+- Navigation
+- Forms
+- Media library surface
+- Analytics event surface
+- HTML export
+- Local publish/preview simulation
+
+## Optional modules
+A project can use commerce or publishing features without forcing every project to be a store. Store products, blog posts, courses and memberships are modules of the universal site builder.
 
 ## Architecture
-The current standalone build intentionally keeps state in JavaScript memory. It does not require a database, payment provider, storage provider or external integration. Payment gateways, secure file storage, accounts, subscriptions, persistence and APIs are reserved for the next phase.
+The current phase is frontend-only. Project state intentionally stays in JavaScript memory and is not persisted to D1, localStorage or sessionStorage. Payment gateways, databases, R2/S3/Drive/Dropbox, external APIs, authentication and secure credential storage are reserved for later phases.
 
-## Inspiration
-The feature scope follows public Payhip capabilities such as digital/physical products, courses, coaching, memberships, bundles, store building, coupons, affiliates, referrals, reviews and pay-what-you-want pricing, while using Nexauren's own UI and implementation.
+The feature direction is informed by public website-builder capabilities such as pages, sections, custom pages, colors, fonts, responsive previews and blogging, while the Nexauren implementation and interface remain independent. citeturn0search0turn0search1
