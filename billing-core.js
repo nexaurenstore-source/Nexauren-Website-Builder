@@ -1,88 +1,12 @@
 import { createPayPalProvider } from './paypal-provider.js';
 
-/* Nexauren Website Builder billing adapter — subscription-only shared D1 model. */
-const BILLING_PRODUCT_TYPES = new Set(['subscription']);
-const billingClean = v => String(v ?? '').trim();
-
-async function billingCurrentUser(request, env) {
-  const auth = request.headers.get('Authorization') || '';
-  let raw = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
-  if (!raw) {
-    const cookie = request.headers.get('Cookie') || '';
-    const m = cookie.match(/(?:^|;\s*)nexauren_session=([^;]+)/);
-    raw = m ? decodeURIComponent(m[1]) : null;
-  }
-  if (!raw) return null;
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
-  const tokenHash = [...new Uint8Array(hash)].map(x => x.toString(16).padStart(2, '0')).join('');
-  return env.DB.prepare('SELECT u.id,u.email,u.username FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?1 AND s.expires_at>?2 LIMIT 1').bind(tokenHash, Math.floor(Date.now() / 1000)).first();
-}
-
-async function billingEnsureAccount(env, userId) {
-  const now = Math.floor(Date.now() / 1000);
-  const free = await env.DB.prepare("SELECT id FROM plans WHERE id='free' AND enabled=1 LIMIT 1").first();
-  if (!free) throw new Error('Billing catalog is not initialized.');
-  await env.DB.prepare("INSERT OR IGNORE INTO billing_accounts(user_id,plan_id,created_at,updated_at) VALUES(?1,'free',?2,?2)").bind(userId, now).run();
-  return env.DB.prepare('SELECT ba.user_id,ba.plan_id,p.name AS plan_name,p.price_minor,p.currency,p.billing_interval,p.credits_per_cycle FROM billing_accounts ba JOIN plans p ON p.id=ba.plan_id WHERE ba.user_id=?1 LIMIT 1').bind(userId).first();
-}
-
-async function billingCatalog(env) {
-  const plans = await env.DB.prepare('SELECT id,name,price_minor,currency,billing_interval,credits_per_cycle,enabled,paypal_product_id,paypal_plan_id FROM plans WHERE enabled=1 ORDER BY price_minor ASC').all();
-  return { provider: billingClean(env.PAYMENT_PROVIDER || 'paypal').toLowerCase(), plans: plans.results || [] };
-}
-
-async function billingAccount(env, userId) {
-  const account = await billingEnsureAccount(env, userId);
-  const subscription = await env.DB.prepare("SELECT id,provider,provider_subscription_id,plan_id,status,start_date,next_billing_date,current_period_start,current_period_end,cancel_at_period_end FROM subscriptions WHERE user_id=?1 ORDER BY created_at DESC LIMIT 1").bind(userId).first();
-  return { account, subscription: subscription || null };
-}
-
-async function billingCreateCheckout(env, request, user, type, productId) {
-  if (!BILLING_PRODUCT_TYPES.has(type) || !productId) throw new Error('Invalid billing product.');
-  const product = await env.DB.prepare('SELECT * FROM plans WHERE id=?1 AND enabled=1 LIMIT 1').bind(productId).first();
-  if (!product) throw new Error('Subscription plan not found.');
-  if (product.billing_interval === 'none') throw new Error('Product is not a subscription.');
-  if (!Number.isSafeInteger(Number(product.price_minor)) || Number(product.price_minor) < 0) throw new Error('Invalid product price.');
-  const providerName = billingClean(env.PAYMENT_PROVIDER || 'paypal').toLowerCase();
-  if (providerName !== 'paypal') throw new Error('Payment provider not configured.');
-
-  const provider = createPayPalProvider();
-  const reference = `order:${crypto.randomUUID()}`;
-  const paymentId = crypto.randomUUID();
-  const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare("INSERT INTO payments(id,user_id,provider,provider_transaction_id,reference,amount_minor,currency,status,type,metadata,created_at,updated_at) VALUES(?1,?2,?3,NULL,?4,?5,?6,'pending','subscription',?7,?8,?8)").bind(paymentId, user.id, providerName, reference, Number(product.price_minor), String(product.currency).toUpperCase(), JSON.stringify({ product_id: productId }), now).run();
-
-  try {
-    const checkout = await provider.createCheckout({ env, request, user, reference, product, productType: 'subscription' });
-    const providerId = billingClean(checkout?.subscription_id || checkout?.transaction_id);
-    await env.DB.prepare("UPDATE payments SET provider_transaction_id=?1,metadata=?2,updated_at=?3 WHERE id=?4 AND status='pending'").bind(providerId || null, JSON.stringify({ product_id: productId, checkout_mode: checkout?.mode || 'subscription' }), Math.floor(Date.now() / 1000), paymentId).run();
-    return { success: true, reference, checkout };
-  } catch (error) {
-    await env.DB.prepare("UPDATE payments SET status='failed',metadata=?1,updated_at=?2 WHERE id=?3 AND status='pending'").bind(JSON.stringify({ product_id: productId, error: String(error).slice(0, 500) }), Math.floor(Date.now() / 1000), paymentId).run();
-    throw error;
-  }
-}
-
-async function billingPaymentStatus(env, userId, reference) {
-  return env.DB.prepare('SELECT id,provider,reference,amount_minor,currency,status,type,provider_transaction_id,metadata,created_at,updated_at FROM payments WHERE user_id=?1 AND reference=?2 LIMIT 1').bind(userId, reference).first();
-}
-
-async function billingFinalizePayment(env, verified) {
-  const { provider, reference, providerTransactionId, status, userId, amountMinor, currency, type, productId, metadata = {} } = verified || {};
-  if (type !== 'subscription') throw new Error('Only subscription payments are supported by Website Builder.');
-  const payment = await env.DB.prepare('SELECT id,user_id,amount_minor,currency,type,status,provider,provider_transaction_id FROM payments WHERE reference=?1 LIMIT 1').bind(reference).first();
-  if (!payment) throw new Error('Payment reference not found.');
-  if (payment.user_id !== userId || payment.provider !== provider || Number(payment.amount_minor) !== Number(amountMinor) || String(payment.currency).toUpperCase() !== String(currency).toUpperCase() || payment.type !== type) throw new Error('Payment verification mismatch.');
-
-  const plan = await env.DB.prepare('SELECT id,price_minor,currency FROM plans WHERE id=?1 AND enabled=1 LIMIT 1').bind(productId).first();
-  if (!plan) throw new Error('Subscription plan not found.');
-  if (Number(plan.price_minor) !== Number(amountMinor) || String(plan.currency).toUpperCase() !== String(currency).toUpperCase()) throw new Error('Subscription plan price mismatch.');
-
-  const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare('UPDATE payments SET provider_transaction_id=?1,status=?2,metadata=?3,updated_at=?4 WHERE reference=?5').bind(String(providerTransactionId), status, JSON.stringify(metadata), now, reference).run();
-  if (status !== 'successful') return { processed: false, status };
-  await env.DB.prepare('UPDATE billing_accounts SET plan_id=?1,updated_at=?2 WHERE user_id=?3').bind(productId, now, userId).run();
-  return { processed: true, plan_id: productId };
-}
-
-export { billingCurrentUser, billingEnsureAccount, billingCatalog, billingAccount, billingCreateCheckout, billingPaymentStatus, billingFinalizePayment };
+/* Nexauren Website Builder billing — subscription plans only. */
+const clean=v=>String(v??'').trim();
+async function billingCurrentUser(request,env){const auth=request.headers.get('Authorization')||'';let raw=auth.startsWith('Bearer ')?auth.slice(7).trim():null;if(!raw){const c=request.headers.get('Cookie')||'';const m=c.match(/(?:^|;\s*)nexauren_session=([^;]+)/);raw=m?decodeURIComponent(m[1]):null;}if(!raw)return null;const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw));const hash=[...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('');return env.DB.prepare('SELECT u.id,u.email,u.username FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?1 AND s.expires_at>?2 LIMIT 1').bind(hash,Math.floor(Date.now()/1000)).first();}
+async function billingEnsureAccount(env,userId){const now=Math.floor(Date.now()/1000);const free=await env.DB.prepare("SELECT id FROM plans WHERE id='free' AND enabled=1 LIMIT 1").first();if(!free)throw new Error('Billing catalog is not initialized.');await env.DB.prepare("INSERT OR IGNORE INTO billing_accounts(user_id,plan_id,created_at,updated_at) VALUES(?1,'free',?2,?2)").bind(userId,now).run();return env.DB.prepare('SELECT ba.user_id,ba.plan_id,p.name AS plan_name,p.price_minor,p.currency,p.billing_interval,p.credits_per_cycle FROM billing_accounts ba JOIN plans p ON p.id=ba.plan_id WHERE ba.user_id=?1 LIMIT 1').bind(userId).first();}
+async function billingCatalog(env){const r=await env.DB.prepare('SELECT id,name,price_minor,currency,billing_interval,credits_per_cycle,enabled,paypal_product_id,paypal_plan_id FROM plans WHERE enabled=1 ORDER BY price_minor ASC').all();return{provider:clean(env.PAYMENT_PROVIDER||'paypal').toLowerCase(),plans:r.results||[]};}
+async function billingAccount(env,userId){const account=await billingEnsureAccount(env,userId);const subscription=await env.DB.prepare("SELECT id,provider,provider_subscription_id,plan_id,status,start_date,next_billing_date,current_period_start,current_period_end,cancel_at_period_end FROM subscriptions WHERE user_id=?1 ORDER BY created_at DESC LIMIT 1").bind(userId).first();return{account,subscription:subscription||null};}
+async function billingCreateCheckout(env,request,user,type,productId){if(type!=='subscription'||!productId)throw new Error('Invalid billing product.');const product=await env.DB.prepare('SELECT * FROM plans WHERE id=?1 AND enabled=1 LIMIT 1').bind(productId).first();if(!product)throw new Error('Subscription plan not found.');if(product.billing_interval==='none')throw new Error('Product is not a subscription.');if(!Number.isSafeInteger(Number(product.price_minor))||Number(product.price_minor)<0)throw new Error('Invalid product price.');const current=await env.DB.prepare("SELECT id,plan_id,status,provider_subscription_id FROM subscriptions WHERE user_id=?1 AND status IN ('pending','active','past_due','suspended') ORDER BY created_at DESC LIMIT 1").bind(user.id).first();if(current){if(current.plan_id===productId)return{success:false,already_subscribed:true,plan_id:productId};throw new Error('An active subscription already exists. Use Change plan instead.');}const providerName=clean(env.PAYMENT_PROVIDER||'paypal').toLowerCase();if(providerName!=='paypal')throw new Error('Payment provider not configured.');const reference=`sub:${crypto.randomUUID()}`;const paymentId=crypto.randomUUID();const now=Math.floor(Date.now()/1000);await env.DB.prepare("INSERT INTO payments(id,user_id,provider,provider_transaction_id,reference,amount_minor,currency,status,type,metadata,created_at,updated_at) VALUES(?1,?2,?3,NULL,?4,?5,?6,'pending','subscription',?7,?8,?8)").bind(paymentId,user.id,providerName,reference,Number(product.price_minor),String(product.currency).toUpperCase(),JSON.stringify({product_id:productId}),now).run();try{const checkout=await createPayPalProvider().createCheckout({env,request,user,reference,product,productType:'subscription'});await env.DB.prepare("UPDATE payments SET provider_transaction_id=?1,metadata=?2,updated_at=?3 WHERE id=?4 AND status='pending'").bind(clean(checkout?.subscription_id),JSON.stringify({product_id:productId,checkout_mode:'subscription'}),Math.floor(Date.now()/1000),paymentId).run();return{success:true,reference,checkout};}catch(e){await env.DB.prepare("UPDATE payments SET status='failed',metadata=?1,updated_at=?2 WHERE id=?3 AND status='pending'").bind(JSON.stringify({product_id:productId,error:String(e).slice(0,500)}),Math.floor(Date.now()/1000),paymentId).run();throw e;}}
+async function billingPaymentStatus(env,userId,reference){return env.DB.prepare('SELECT id,provider,reference,amount_minor,currency,status,type,provider_transaction_id,metadata,created_at,updated_at FROM payments WHERE user_id=?1 AND reference=?2 LIMIT 1').bind(userId,reference).first();}
+async function billingFinalizePayment(env,{provider,reference,providerTransactionId,status,userId,amountMinor,currency,type,productId,metadata={}}){if(type!=='subscription')throw new Error('Only subscription payments are supported.');const payment=await env.DB.prepare('SELECT id,user_id,amount_minor,currency,type,status,provider,provider_transaction_id FROM payments WHERE reference=?1 LIMIT 1').bind(reference).first();if(!payment)throw new Error('Payment reference not found.');if(payment.user_id!==userId||payment.provider!==provider||Number(payment.amount_minor)!==Number(amountMinor)||String(payment.currency).toUpperCase()!==String(currency).toUpperCase()||payment.type!==type)throw new Error('Payment verification mismatch.');const plan=await env.DB.prepare('SELECT id,price_minor,currency FROM plans WHERE id=?1 AND enabled=1 LIMIT 1').bind(productId).first();if(!plan)throw new Error('Subscription plan not found.');if(Number(plan.price_minor)!==Number(amountMinor)||String(plan.currency).toUpperCase()!==String(currency).toUpperCase())throw new Error('Subscription plan price mismatch.');const now=Math.floor(Date.now()/1000);await env.DB.prepare('UPDATE payments SET provider_transaction_id=?1,status=?2,metadata=?3,updated_at=?4 WHERE reference=?5').bind(String(providerTransactionId),status,JSON.stringify(metadata),now,reference).run();if(status!=='successful')return{processed:false,status};await env.DB.prepare('UPDATE billing_accounts SET plan_id=?1,updated_at=?2 WHERE user_id=?3').bind(productId,now,userId).run();return{processed:true,plan_id:productId};}
+export{billingCurrentUser,billingEnsureAccount,billingCatalog,billingAccount,billingCreateCheckout,billingPaymentStatus,billingFinalizePayment};
