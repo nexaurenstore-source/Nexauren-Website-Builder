@@ -4,7 +4,10 @@
   "main":"worker.js",
   "compatibility_date":"2026-08-28",
   "assets":{"directory":".","binding":"ASSETS","not_found_handling":"404-page"},
-  "d1_databases":[{"binding":"DB","database_name":"nexauren-db","database_id":"b521297c-ada5-4818-bb66-9bde85bee2a1"}],
+  "d1_databases":[
+    {"binding":"DB","database_name":"nexauren-db","database_id":"b521297c-ada5-4818-bb66-9bde85bee2a1"},
+    {"binding":"BUILDER_DB","database_name":"nexauren-website-build","database_id":"b6eea423-f573-46b7-a789-349078d4336d"}
+  ],
   "vars":{"PAYMENT_PROVIDER":"paypal","PAYPAL_ENVIRONMENT":"live","PAYMENT_BRAND_NAME":"Nexauren"},
   "secrets":{"required":["PAYPAL_CLIENT_ID","PAYPAL_CLIENT_SECRET"]}
 }
